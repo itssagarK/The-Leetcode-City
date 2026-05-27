@@ -1,0 +1,41 @@
+name: Enforce PR Branch Hygiene
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  enforce-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject PRs from main/master
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headBranch = context.payload.pull_request.head.ref;
+            
+            if (headBranch === 'main' || headBranch === 'master') {
+              const body = `🚨 **BRANCH HYGIENE ERROR** 🚨\n\nHello @${context.payload.pull_request.user.login}, thank you for your willingness to contribute!\n\nHowever, you have submitted this Pull Request directly from your \`${headBranch}\` branch. \n\nTo keep git histories clean and prevent merge conflicts, our \`CONTRIBUTING.md\` strictly requires all changes to be made on a **separate, dedicated branch** (e.g., \`git checkout -b 12-fix-bug\`).\n\n**Action Required:**\n1. Please close this PR.\n2. Create a new branch on your local fork.\n3. Move your commits to that branch.\n4. Open a new Pull Request from the new branch.`;
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+              
+              // Automatically close the PR to prevent merging
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                state: 'closed'
+              });
+              
+              core.setFailed("Pull requests from 'main' or 'master' are strictly prohibited.");
+            } else {
+              console.log(`Branch ${headBranch} is valid.`);
+            }

@@ -55,10 +55,9 @@ Run `npm run lint` before submitting.
 
 ## Making Changes
 
-> **⚠️ IMPORTANT FOR CONTRIBUTORS:** You must be assigned to an issue before submitting a Pull Request. If you find a bug or want to add a feature, please create an issue first (or comment on an existing one) and wait to be assigned. Pull Requests submitted without an assigned issue will not be reviewed or merged.
-
 1. Fork the repo
-2. Create a branch from `main` and name it with the issue number and name (e.g. `git checkout -b 12-issue-name`). **Including the issue number is required** so it becomes easier to identify.
+2. Create a branch from `main` and name it with the issue number and name (e.g. `git checkout -b 12-issue-name`). 
+> **🛑 STOP:** Do NOT commit your changes to your fork's `main` branch. You MUST create a new branch. Pull Requests submitted from a `main` or `master` branch will be automatically rejected by our bots.
 3. Make your changes
 4. Run `npm run lint` and fix any issues
 5. Commit with a clear message (e.g. `feat: add rain weather effect`)
