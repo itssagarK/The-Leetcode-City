@@ -447,6 +447,7 @@ function HomeContent() {
   const [vsCodeKey, setVsCodeKey] = useState<string | null>(null);
   const [vsCodeKeyLoading, setVsCodeKeyLoading] = useState(false);
   const [vsCodeKeyCopied, setVsCodeKeyCopied] = useState(false);
+  const [hasVsCodeKey, setHasVsCodeKey] = useState(false);
   const [codingPanelOpen, setCodingPanelOpen] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [claiming, setClaiming] = useState(false);
@@ -662,6 +663,13 @@ function HomeContent() {
           console.warn("[app/page.tsx] error:", err);
           setLinkedLeetCodeUsername(null);
         }
+
+        // Check if user already has a VS Code API key
+        try {
+          const keyRes = await fetch("/api/vscode-key");
+          const keyData = await keyRes.json();
+          if (keyData.hasKey) setHasVsCodeKey(true);
+        } catch { /* ignore */ }
       } else {
         setLinkedLeetCodeUsername(null);
       }
@@ -2780,9 +2788,44 @@ function HomeContent() {
                             <p className="mt-3 text-[10px] normal-case text-muted/50">
                               Your building lights up in ~30s
                             </p>
-                            <p className="mt-1.5 text-[10px] normal-case text-muted/50">
-                              Only your username and language are shared publicly. Control what&apos;s sent in VS Code Settings &gt; LeetCode City &gt; Privacy.
+                          </div>
+                        ) : hasVsCodeKey ? (
+                          <div className="px-5 py-5">
+                            <div className="mb-3 flex items-center gap-2">
+                              <span className="h-2 w-2 rounded-full bg-[#4ade80]" />
+                              <p className="text-sm font-bold text-cream">Extension Connected</p>
+                            </div>
+                            <p className="mb-4 text-[11px] normal-case text-muted">
+                              Your API key is active. Open VS Code and start coding to power your building.
                             </p>
+                            <div className="space-y-2.5 text-xs normal-case text-muted">
+                              <p><span className="text-cream">Tip:</span> Run <span className="text-cream">Cmd+Shift+P</span> &rarr; &ldquo;Pulse: Connect&rdquo; if you need to re-enter your key</p>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                setVsCodeKeyLoading(true);
+                                try {
+                                  const res = await fetch("/api/vscode-key", { method: "POST" });
+                                  const data = await res.json();
+                                  if (data.key) {
+                                    setVsCodeKey(data.key);
+                                    navigator.clipboard.writeText(data.key);
+                                    setVsCodeKeyCopied(true);
+                                    setTimeout(() => setVsCodeKeyCopied(false), 2000);
+                                  } else {
+                                    alert(data.error || "Failed to regenerate key.");
+                                  }
+                                } catch {
+                                  alert("Network error. Please try again.");
+                                } finally {
+                                  setVsCodeKeyLoading(false);
+                                }
+                              }}
+                              disabled={vsCodeKeyLoading}
+                              className="mt-4 w-full border border-border py-2 text-center text-[11px] normal-case text-muted transition-colors hover:border-border-light hover:text-cream"
+                            >
+                              {vsCodeKeyLoading ? "Generating..." : "Regenerate Key"}
+                            </button>
                           </div>
                         ) : (
                           <div className="px-5 py-5">
@@ -2805,6 +2848,7 @@ function HomeContent() {
                                   const data = await res.json();
                                   if (data.key) {
                                     setVsCodeKey(data.key);
+                                    setHasVsCodeKey(true);
                                     navigator.clipboard.writeText(data.key);
                                     setVsCodeKeyCopied(true);
                                     setTimeout(() => setVsCodeKeyCopied(false), 2000);
