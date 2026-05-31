@@ -266,6 +266,19 @@ jobs:
               });
 
               console.log(`Successfully approved PR #${prNumber}!`);
+
+              console.log(`Attempting to auto-merge PR #${prNumber}...`);
+              try {
+                await github.rest.pulls.merge({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  merge_method: 'squash'
+                });
+                console.log(`Successfully merged PR #${prNumber}!`);
+              } catch (mergeErr) {
+                console.error(`Failed to merge PR #${prNumber}:`, mergeErr.message);
+              }
             } catch (err) {
               console.error(`Failed to approve PR #${prNumber}:`, err.message);
               core.setFailed(err.message);
