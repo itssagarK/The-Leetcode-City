@@ -631,7 +631,12 @@ function HomeContent() {
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [vsCodeKey, setVsCodeKey] = useState<string | null>(null);
-  const [hasVsCodeKey, setHasVsCodeKey] = useState<boolean | null>(null);
+  const [hasVsCodeKey, setHasVsCodeKey] = useState<boolean | null>(() => {
+    // Check localStorage first so returning users don't see setup instructions
+    try {
+      return localStorage.getItem("leetcodecity_has_vscode_key") === "1" ? true : null;
+    } catch { return null; }
+  });
   const [vsCodeKeyLoading, setVsCodeKeyLoading] = useState(false);
   const [vsCodeKeyCopied, setVsCodeKeyCopied] = useState(false);
   const [codingPanelOpen, setCodingPanelOpen] = useState(false);
@@ -643,6 +648,10 @@ function HomeContent() {
         .then(d => {
           if (typeof d.hasKey === "boolean") {
             setHasVsCodeKey(d.hasKey);
+            try {
+              if (d.hasKey) localStorage.setItem("leetcodecity_has_vscode_key", "1");
+              else localStorage.removeItem("leetcodecity_has_vscode_key");
+            } catch {}
           }
         })
         .catch(() => {});
@@ -3209,13 +3218,6 @@ function HomeContent() {
         open={analyticsOpen}
         onClose={() => setAnalyticsOpen(false)}
       />
-      <button
-        onClick={() => setAnalyticsOpen((v) => !v)}
-        className="fixed top-[52px] right-3 z-40 border border-border bg-bg/90 px-2 py-1 text-[9px] transition-colors hover:border-border-light sm:top-[60px] sm:right-4"
-        style={{ color: analyticsOpen ? "#ffa116" : "#8c8c9c" }}
-      >
-        [ANALYTICS]
-      </button>
 
       {/* ─── Explore Mode: minimal UI ─── */}
       {exploreMode && !flyMode && (
@@ -3262,7 +3264,7 @@ function HomeContent() {
 
           {/* Feed toggle (top-right, below LeetCode badges on desktop) */}
           {feedEvents.length >= 1 && (
-            <div className="pointer-events-auto absolute top-3 right-3 sm:top-14 sm:right-4">
+            <div className="pointer-events-auto absolute top-3 right-3 sm:top-[60px] sm:right-4">
               <button
                 onClick={() => setFeedPanelOpen(true)}
                 className="flex items-center gap-2 border-[3px] border-border bg-bg/70 px-3 py-1.5 text-[10px] backdrop-blur-sm transition-colors"
@@ -3356,6 +3358,13 @@ function HomeContent() {
               <span className="hidden sm:inline text-muted">live</span>
             </div>
           )}
+          <button
+            onClick={() => setAnalyticsOpen((v) => !v)}
+            className="hidden sm:flex items-center gap-1.5 border-[3px] border-border bg-bg/70 px-2.5 py-1 text-[10px] backdrop-blur-sm transition-colors hover:border-border-light"
+            style={{ color: analyticsOpen ? "#ffa116" : "#8c8c9c" }}
+          >
+            [ANALYTICS]
+          </button>
           {(() => {
             const energyLabel =
               codingCount === 0
@@ -3505,9 +3514,32 @@ function HomeContent() {
                                 Sign in with LeetCode
                               </button>
                             </div>
-                          ) : liveByLogin.has(authLogin) ? (
-                            <div className="px-5 py-3.5 text-center text-xs normal-case text-[#4ade80]">
-                              Your building is powering the city
+                          ) : Array.from(liveByLogin.keys()).some(k => k.toLowerCase() === selfLogin) ? (
+                            <div className="px-5 py-4 text-center">
+                              <div className="mb-2 text-lg">⚡</div>
+                              <p className="mb-1.5 text-xs font-bold normal-case text-[#4ade80]">
+                                Your building is glowing!
+                              </p>
+                              {(() => {
+                                const mySession = Array.from(liveByLogin.values()).find(
+                                  s => s.githubLogin.toLowerCase() === selfLogin
+                                );
+                                const othersCount = liveByLogin.size - 1;
+                                return (
+                                  <>
+                                    {mySession?.language && (
+                                      <p className="mb-1 text-[10px] normal-case text-muted">
+                                        Coding in <span className="text-cream">{mySession.language}</span>
+                                      </p>
+                                    )}
+                                    <p className="text-[10px] normal-case text-muted/70">
+                                      {othersCount > 0
+                                        ? `${othersCount} other dev${othersCount > 1 ? "s" : ""} coding alongside you`
+                                        : "You're the only one lighting the city right now 🌃"}
+                                    </p>
+                                  </>
+                                );
+                              })()}
                             </div>
                           ) : vsCodeKey ? (
                             <div className="px-5 py-5">
@@ -3564,6 +3596,31 @@ function HomeContent() {
                                 Settings &gt; LeetCode City &gt; Privacy.
                               </p>
                             </div>
+                          ) : hasVsCodeKey !== false ? (
+                            /* User has connected before (or still loading) — don't show setup */
+                            <div className="px-5 py-5 text-center">
+                              <div className="mb-3 text-2xl">🌙</div>
+                              <p className="mb-2 text-sm normal-case text-cream font-bold">
+                                Your building is sleeping
+                              </p>
+                              <p className="mb-4 text-[11px] normal-case leading-relaxed text-muted">
+                                Open your IDE and start coding to light up your
+                                building and power the city. Your extension is
+                                already connected!
+                              </p>
+                              <div className="mb-3 flex items-center justify-center gap-2 text-[10px] normal-case text-muted/60">
+                                <span className="h-1.5 w-1.5 rounded-full bg-muted/40" />
+                                Waiting for your signal...
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setHasVsCodeKey(false);
+                                }}
+                                className="text-[10px] normal-case text-muted/50 transition-colors hover:text-cream"
+                              >
+                                Lost your key? Set up again &rarr;
+                              </button>
+                            </div>
                           ) : (
                             <div className="px-5 py-5">
                               <p className="mb-3 text-sm normal-case text-cream font-bold">
@@ -3576,7 +3633,7 @@ function HomeContent() {
                               <div className="mb-4 space-y-2.5 text-xs normal-case text-muted">
                                 <p>
                                   <span className="text-cream">1.</span>{" "}
-                                  {hasVsCodeKey ? "You already have an active key! Lost it? Generate a new one below." : "Generate your key below"}
+                                  Generate your key below
                                 </p>
                                 <p>
                                   <span className="text-cream">2.</span> Install{" "}
@@ -3605,6 +3662,8 @@ function HomeContent() {
                                     const data = await res.json();
                                     if (data.key) {
                                       setVsCodeKey(data.key);
+                                      setHasVsCodeKey(true);
+                                      try { localStorage.setItem("leetcodecity_has_vscode_key", "1"); } catch {}
                                       navigator.clipboard.writeText(data.key);
                                       setVsCodeKeyCopied(true);
                                       setTimeout(

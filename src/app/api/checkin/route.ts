@@ -90,7 +90,7 @@ async function fetchWeeklyContributions(login: string): Promise<number | null> {
   return fetchLeetCodeWeeklySubmissions(login);
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const supabase = await createServerSupabase();
   const {
     data: { user },

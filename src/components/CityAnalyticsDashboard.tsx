@@ -303,7 +303,7 @@ export default function CityAnalyticsDashboard({
 
   return (
     <div
-      className="fixed top-16 right-3 z-40 w-56 border border-border bg-bg/95 backdrop-blur-sm"
+      className="fixed top-12 right-3 z-[35] w-56 border border-border bg-bg/95 backdrop-blur-sm sm:top-14 sm:right-4"
       style={{ boxShadow: "4px 4px 0 0 rgba(0,0,0,0.5)" }}
     >
       {/* Header */}
