@@ -47,6 +47,71 @@ LeetCode City transforms every LeetCode profile into a unique pixel art building
 
 Buildings are rendered with instanced meshes and a LOD (Level of Detail) system for performance. Close buildings show full detail with animated windows; distant buildings use simplified geometry.
 
+## Architecture & Rendering Flow
+
+### Data Flow Overview
+
+```
+Supabase (developers table)
+        │
+        ▼
+generateCityLayout()          ← src/lib/github.ts
+  ├── calcHeightV2/calcHeight    (submissions → height)
+  ├── calcWidthV2/calcWidth      (active days → width)
+  ├── calcDepthV2/calcDepth      (streak → depth)
+  ├── calcLitPercentageV2        (recent activity → window glow)
+  └── block-grid placement       (position every building on the map)
+        │
+        ▼
+CityBuilding[]                ← passed from page.tsx to CityCanvas
+        │
+        ▼
+CityCanvas (Three.js scene)   ← src/components/CityCanvas.tsx
+  ├── Building3D (per building)  ← src/components/Building3D.tsx
+  ├── InstancedMesh decorations  (trees, cars, lamps, benches…)
+  └── Sky, river, bridges, ads
+        │
+        ▼
+GPU — single frame
+```
+
+### Building Generation (`src/lib/github.ts`)
+
+Two generation pipelines run inside `generateCityLayout()`:
+
+- **V2 pipeline** — for LC-claimed buildings (`isV2Dev`). Uses `calcHeightV2`, `calcWidthV2`, `calcDepthV2`, and `calcLitPercentageV2`, which map LeetCode-native stats (easy/medium/hard solved counts, contest rating, app streak) to visual dimensions.
+- **Legacy pipeline** — for unclaimed/GitHub-only buildings. Uses `calcHeight`, `calcWidth`, and `calcDepth`, which map GitHub contribution count, stars, and repo count.
+
+Both pipelines feed into a shared block-grid placer: buildings are arranged into city blocks separated by streets and alleys, with district zones (`districtZones`) grouping them by tech stack.
+
+### Window Texture Atlas (`src/components/Building3D.tsx`)
+
+All building windows share a single **2048×2048 canvas texture** generated once at startup. It contains 6 lit-percentage bands (20%, 35%, 50%, 65%, 80%, 95%), each 42 rows tall and 256 columns wide, with 8px cells (6px window + 2px gap). Each building samples a UV region from its matching band — one texture, zero per-building allocation, one draw call for all windows across the entire city.
+
+### Instanced Mesh Optimization (`src/components/CityCanvas.tsx`)
+
+City decorations are rendered as `THREE.InstancedMesh` — one GPU draw call per geometry type regardless of how many instances exist in the scene:
+
+| Mesh type | Instances |
+|-----------|-----------|
+| Tree trunks & canopies | All trees in the city |
+| Lamp poles & lights | All street lamps |
+| Car bodies & cabins | All parked cars |
+| Benches, fountain parts | All plaza furniture |
+| Sidewalk tiles | All pavement |
+| Collectibles (fly mode) | Up to 40 coins |
+
+Building bodies are handled individually in `Building3D.tsx` since each needs a unique size, color, and effect set.
+
+### LOD System (`src/components/Building3D.tsx`)
+
+Buildings switch detail level based on camera distance, computed per frame:
+
+- **Near** — full window texture, neon outlines, particle auras, billboard images, and all cosmetic effect layers
+- **Far** — simplified geometry, no texture sampling, no effect layers
+
+This keeps frame rate stable regardless of city size — adding more buildings only affects the far-LOD bucket, which has near-zero per-building GPU cost.
+
 ## Tech Stack
 
 - **Framework:** [Next.js](https://nextjs.org) 16 (App Router, Turbopack)
