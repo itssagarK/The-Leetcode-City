@@ -336,7 +336,7 @@ export default function ArenaPage() {
                 <div className="mt-6 flex flex-col gap-4">
                   {challenges.length === 0 ? (
                     <div className="border border-dashed border-border p-6 text-center text-xs text-muted normal-case">
-                      No active daily challenges scheduled for today. Run the challenge rotating cron job.
+                      No active daily challenges scheduled for today.
                     </div>
                   ) : (
                     challenges.map((ch) => {
