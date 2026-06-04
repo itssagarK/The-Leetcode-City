@@ -1104,12 +1104,16 @@ function HomeContent() {
   const sessionUserId = session?.user?.id;
   useEffect(() => {
     if (!sessionUserId) return;
+    let cancelled = false;
     fetch("/api/raid/loadout")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.vehicle) setFlyVehicle(data.vehicle);
+        if (!cancelled && data?.vehicle) setFlyVehicle(data.vehicle);
       })
       .catch(() => { });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionUserId]);
 
   // Load theme from DB when logged in (overrides localStorage)
@@ -2565,12 +2569,16 @@ function HomeContent() {
 
   // Fetch milestone celebrations on mount
   useEffect(() => {
+    let cancelled = false;
     fetch("/api/milestone-celebration")
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
-        if (Array.isArray(data)) setMilestoneCelebrations(data);
+        if (!cancelled && Array.isArray(data)) setMilestoneCelebrations(data);
       })
       .catch(() => { });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Record milestone when crossed
@@ -2584,6 +2592,8 @@ function HomeContent() {
       (c) => c.milestone === current,
     );
     if (alreadyRecorded) return;
+
+    let cancelled = false;
     fetch("/api/milestone-celebration", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2591,7 +2601,7 @@ function HomeContent() {
     })
       .then((r) => r.json())
       .then((data) => {
-        if (data.celebrated) {
+        if (!cancelled && data.celebrated) {
           setMilestoneCelebrations((prev) => [
             {
               milestone: data.milestone,
@@ -2602,6 +2612,9 @@ function HomeContent() {
         }
       })
       .catch(() => { });
+    return () => {
+      cancelled = true;
+    };
   }, [stats.total_developers, milestoneCelebrations]);
 
   // Feature 1: Daily Challenge Nudge — show after load if user has history but hasn't played today

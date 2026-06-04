@@ -71,17 +71,23 @@ export default function CodexModal({ isOpen, onClose, accentColor, shadowColor }
   // Fetch Codex data on mount/open
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     setLoading(true);
     fetch("/api/codex")
       .then((res) => res.json())
       .then((codexData) => {
+        if (cancelled) return;
         setData(codexData);
         setLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to load Codex data:", err);
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;

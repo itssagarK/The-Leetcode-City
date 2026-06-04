@@ -27,25 +27,30 @@ export default function DailiesLeaderboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const fetchLeaderboard = () => {
-    setLoading(true);
-    setError(false);
-    fetch("/api/dailies/leaderboard")
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to fetch");
-        return r.json();
-      })
-      .then((data) => {
-        setLeaderboard(data.leaderboard ?? []);
-      })
-      .catch(() => {
-        setError(true);
-      })
-      .finally(() => setLoading(false));
-  };
-
   useEffect(() => {
+    let cancelled = false;
+    const fetchLeaderboard = () => {
+      setLoading(true);
+      setError(false);
+      fetch("/api/dailies/leaderboard")
+        .then((r) => {
+          if (!r.ok) throw new Error("Failed to fetch");
+          return r.json();
+        })
+        .then((data) => {
+          if (!cancelled) setLeaderboard(data.leaderboard ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setError(true);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
     fetchLeaderboard();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Find user in leaderboard

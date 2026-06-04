@@ -312,9 +312,11 @@ function RabbitContent() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     const supabase = createBrowserSupabase();
 
     supabase.auth.getSession().then(({ data: { session } }: { data: { session: any } }) => {
+      if (cancelled) return;
       const login = (
         session?.user?.user_metadata?.user_name ??
         session?.user?.user_metadata?.preferred_username ??
@@ -325,7 +327,7 @@ function RabbitContent() {
       if (session) {
         fetch("/api/rabbit?check=true")
           .then((r) => r.ok ? r.json() : null)
-          .then((data) => { if (data) setUserData(data); })
+          .then((data) => { if (!cancelled && data) setUserData(data); })
           .catch(() => { });
       } else {
         setUserData({ progress: 0, completed: false, completed_at: null });
@@ -334,9 +336,13 @@ function RabbitContent() {
 
     fetch("/api/rabbit")
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data?.completers) setCompleters(data.completers); })
+      .then((data) => { if (!cancelled && data?.completers) setCompleters(data.completers); })
       .catch(() => { })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const completed = userData?.completed ?? false;
