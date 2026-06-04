@@ -21,6 +21,20 @@ function maxScoreForCollected(collected: number): number {
   return Math.ceil(bestComboScore * 1.5 * 1.1);
 }
 
+interface FlyScoreDev {
+  developer_id: number;
+}
+
+interface FlyScoreLeaderboard {
+  score: number;
+  collected: number;
+  max_combo: number;
+  flight_ms: number;
+  created_at: string;
+  developer_id: number;
+  developers: { github_login: string; avatar_url: string } | null;
+}
+
 export async function POST(request: Request) {
   const supabase = await createServerSupabase();
   const {
@@ -135,14 +149,14 @@ export async function POST(request: Request) {
     .lt("flight_ms", flight_ms);
 
   const uniqueHigher = new Set([
-    ...(higherDevs ?? []).map((r: any) => r.developer_id),
-    ...(tiedFasterDevs ?? []).map((r: any) => r.developer_id),
+    ...(higherDevs ?? []).map((r: FlyScoreDev) => r.developer_id),
+    ...(tiedFasterDevs ?? []).map((r: FlyScoreDev) => r.developer_id),
   ]);
   uniqueHigher.delete(dev.id);
   const rank_today = uniqueHigher.size + 1;
 
   const { data: allDevs } = await admin.from("fly_scores").select("developer_id").eq("seed", seed);
-  const total = new Set((allDevs ?? []).map((r: any) => r.developer_id)).size;
+  const total = new Set((allDevs ?? []).map((r: FlyScoreDev) => r.developer_id)).size;
 
   return NextResponse.json({ id: row.id, score, rank_today, total });
 }
@@ -172,13 +186,13 @@ export async function GET(request: Request) {
   }
 
   const seen = new Set<number>();
-  const unique = (data ?? []).filter((row: any) => {
+  const unique = (data ?? []).filter((row: FlyScoreLeaderboard) => {
     if (seen.has(row.developer_id)) return false;
     seen.add(row.developer_id);
     return true;
   });
 
-  const leaderboard = unique.slice(0, 20).map((row: any) => ({
+  const leaderboard = unique.slice(0, 20).map((row: FlyScoreLeaderboard) => ({
     score: row.score,
     collected: row.collected,
     max_combo: row.max_combo,
@@ -188,7 +202,7 @@ export async function GET(request: Request) {
     avatar_url: row.developers?.avatar_url,
   }));
 
-  const total = new Set((devIds ?? []).map((r: any) => r.developer_id)).size;
+  const total = new Set((devIds ?? []).map((r: FlyScoreDev) => r.developer_id)).size;
 
   return NextResponse.json(
     { seed, leaderboard, total },
