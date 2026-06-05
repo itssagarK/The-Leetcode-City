@@ -39,7 +39,7 @@ export default async function TrackingPage({ params }: Props) {
   if (!ad) notFound();
 
   // Fetch event counts
-  const [impressions, clicks, ctaClicks] = await Promise.all([
+  const [impressions, clicks, ctaClicks, dailyStats] = await Promise.all([
     sb
       .from("sky_ad_events")
       .select("id", { count: "exact", head: true })
@@ -55,7 +55,31 @@ export default async function TrackingPage({ params }: Props) {
       .select("id", { count: "exact", head: true })
       .eq("ad_id", ad.id)
       .eq("event_type", "cta_click"),
+    sb
+      .from("sky_ad_daily_stats")
+      .select("day, impressions, clicks, cta_clicks")
+      .eq("ad_id", ad.id)
+      .order("day", { ascending: true })
+      .limit(30),
   ]);
+
+  const daily = dailyStats.data ?? [];
+
+  const chartW = 400;
+  const chartH = 80;
+  const chartMax = Math.max(
+    ...daily.map((d) => Math.max(Number(d.impressions), Number(d.clicks), Number(d.cta_clicks))),
+    1,
+  );
+  const chartPts = (key: "impressions" | "clicks" | "cta_clicks") =>
+    daily
+      .map((d, i) => `${(i / (daily.length - 1)) * chartW},${chartH - (Number(d[key]) / chartMax) * chartH}`)
+      .join(" ");
+  const chartSeries = [
+    { key: "impressions" as const, color: ACCENT,    label: "Impressions" },
+    { key: "clicks"      as const, color: "#c8e64a", label: "Clicks" },
+    { key: "cta_clicks"  as const, color: "#8c8c9c", label: "CTA Clicks" },
+  ];
 
   // Add historical baselines
   const baseline = HISTORICAL_BASELINES[ad.id] ?? { impressions: 0, clicks: 0, cta_clicks: 0 };
@@ -153,6 +177,52 @@ export default async function TrackingPage({ params }: Props) {
               </p>
             </div>
           ))}
+        </div>
+
+        {/* Daily Trends */}
+        <div className="mt-6 border-[3px] border-border p-5">
+          <h2 className="text-sm text-cream">
+            Daily <span style={{ color: ACCENT }}>Trends</span>
+          </h2>
+          <p className="mt-1 text-[9px] text-muted normal-case">Last 30 days</p>
+          {daily.length < 2 ? (
+            <p className="mt-4 text-center text-[9px] text-muted normal-case">
+              Not enough data yet
+            </p>
+          ) : (
+            <div className="mt-4">
+              <svg
+                viewBox={`0 0 ${chartW} ${chartH}`}
+                preserveAspectRatio="none"
+                className="w-full"
+                style={{ height: chartH }}
+              >
+                {chartSeries.map(({ key, color }) => (
+                  <polyline
+                    key={key}
+                    points={chartPts(key)}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </svg>
+              <div className="mt-3 flex gap-4">
+                {chartSeries.map(({ key, color, label }) => (
+                  <div key={key} className="flex items-center gap-1.5">
+                    <span
+                      className="inline-block h-1.5 w-3 rounded-full"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="text-[8px] text-muted normal-case">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Details */}
