@@ -86,22 +86,34 @@ jobs:
 
             for (const issueNumber of uniqueIssueNumbers) {
               try {
+                // Fetch issue to get assignees
+                const { data: issueData } = await github.rest.issues.get({
+                  owner, repo, issue_number: issueNumber
+                });
+                
+                const assignees = issueData.assignees.map(a => a.login);
+                if (assignees.length > 0) {
+                  await github.rest.issues.removeAssignees({
+                    owner, repo, issue_number: issueNumber,
+                    assignees
+                  });
+                  core.info(`Unassigned ${assignees.join(', ')} from issue #${issueNumber}`);
+                }
+
                 // Reopen the issue
                 await github.rest.issues.update({
                   owner, repo, issue_number: issueNumber,
                   state: 'open'
                 });
 
-                // Post a comment explaining why it was reopened
+                // Post a generic comment explaining why it was reopened
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: issueNumber,
-                  body: `🔄 **This issue has been reopened.**
+                  body: `🔄 **This issue has been reopened and unassigned.**
 
-                  The associated PR #${prNumber} by @${prAuthor} was closed and marked as invalid.
+                  The associated PR #${prNumber} by @${prAuthor} was closed for failing to follow proper contribution rules.
 
-                  **Reason:** ${reopenReason}
-
-                  This issue is now back in the pool and open for other contributors to claim! 🚀`
+                  This issue is now back in the pool and open for other contributors to claim! Please ensure you read and follow the project guidelines before working on this. 🚀`
                 });
 
                 core.info(`Reopened linked issue #${issueNumber} and commented.`);

@@ -20,46 +20,33 @@ async function rollItemDrops(sb: any, difficulty: string, devId: number): Promis
   const roll = Math.random();
 
   if (difficulty === "easy") {
-    // 100% -> 1 Common item
     const common = await getRandomItemByRarity("common");
     if (common) droppedItems.push(common);
-
-    // 15% -> 1 Rare item
     if (roll < 0.15) {
       const rare = await getRandomItemByRarity("rare");
       if (rare) droppedItems.push(rare);
     }
   } else if (difficulty === "medium") {
-    // 100% -> 1 Rare item
     const rare = await getRandomItemByRarity("rare");
     if (rare) droppedItems.push(rare);
-
-    // 20% -> 1 Epic item
     if (roll < 0.20) {
       const epic = await getRandomItemByRarity("epic");
       if (epic) droppedItems.push(epic);
-    }
-    // 10% -> 2nd Rare item
-    else if (roll < 0.30) {
+    } else if (roll < 0.30) {
       const rare2 = await getRandomItemByRarity("rare");
       if (rare2) droppedItems.push(rare2);
     }
   } else if (difficulty === "hard") {
-    // 100% -> 1 Epic item
     const epic = await getRandomItemByRarity("epic");
     if (epic) droppedItems.push(epic);
-
-    // 25% -> 1 Rare item
     if (roll < 0.25) {
       const rare = await getRandomItemByRarity("rare");
       if (rare) droppedItems.push(rare);
     }
-    // 5% -> 1 Legendary item
     if (Math.random() < 0.05) {
       const legendary = await getRandomItemByRarity("legendary");
       if (legendary) droppedItems.push(legendary);
     }
-    // 8% -> Epic + Rare bonus combo
     if (Math.random() < 0.08) {
       const epicBonus = await getRandomItemByRarity("epic");
       const rareBonus = await getRandomItemByRarity("rare");
@@ -68,30 +55,13 @@ async function rollItemDrops(sb: any, difficulty: string, devId: number): Promis
     }
   }
 
-  // Save dropped items to user's inventory
+  // Save dropped items to user's inventory using atomic upsert
+  // quantity increments atomically — no read-then-write here either
   for (const item of droppedItems) {
-    const { data: existing } = await sb
-      .from("arena_inventory")
-      .select("id, quantity")
-      .eq("user_id", devId)
-      .eq("item_id", item.id)
-      .maybeSingle();
-
-    if (existing) {
-      await sb
-        .from("arena_inventory")
-        .update({ quantity: existing.quantity + 1 })
-        .eq("id", existing.id);
-    } else {
-      await sb
-        .from("arena_inventory")
-        .insert({
-          user_id: devId,
-          item_id: item.id,
-          quantity: 1,
-          is_equipped: false
-        });
-    }
+    await sb.rpc("upsert_arena_inventory_item", {
+      p_user_id: devId,
+      p_item_id: item.id,
+    });
   }
 
   return droppedItems;
@@ -110,7 +80,7 @@ export async function POST(request: NextRequest) {
     language,
     code_hash,
     code,
-    status, // 'accepted', 'wrong_answer', 'tle', 'rte'
+    status,
     tests_passed,
     tests_total,
     execution_time_ms
@@ -124,7 +94,7 @@ export async function POST(request: NextRequest) {
 
   // 1. Fetch challenge details (if linked)
   let challenge: any = null;
-  let difficulty = "medium"; // fallback default
+  let difficulty = "medium";
   let basePoints = 100;
   let baseXp = 10;
 
@@ -156,14 +126,14 @@ export async function POST(request: NextRequest) {
       tests_passed: tests_passed || 0,
       tests_total: tests_total || 0,
       execution_time_ms: execution_time_ms || null,
-      is_verified: false // server verification placeholder
+      is_verified: false,
     });
 
   if (insertError) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
-  // 3. Process rewards only if status is accepted
+  // 3. Process rewards only for accepted submissions
   const isAccepted = status === "accepted";
   let grantedXp = 0;
   let grantedPoints = 0;
@@ -171,76 +141,62 @@ export async function POST(request: NextRequest) {
   let isFirstSolve = false;
 
   if (isAccepted) {
-    // Check if they already solved this challenge successfully before
-    let priorSolved = false;
-    if (challenge_id) {
-      const { data: prior } = await sb
-        .from("arena_submissions")
-        .select("id")
-        .eq("user_id", dev.id)
-        .eq("challenge_id", challenge_id)
-        .eq("status", "accepted")
-        .limit(2); // this sub + previous sub
-      priorSolved = prior ? prior.length > 1 : false;
-    } else {
-      const { data: prior } = await sb
-        .from("arena_submissions")
-        .select("id")
-        .eq("user_id", dev.id)
-        .eq("problem_id", problem_id)
-        .eq("status", "accepted")
-        .limit(2);
-      priorSolved = prior ? prior.length > 1 : false;
-    }
+    // Fetch active buffs to compute multipliers before the atomic claim
+    const { data: activeBuffs } = await sb
+      .from("arena_active_buffs")
+      .select("buff_type, buff_value")
+      .eq("user_id", dev.id)
+      .gt("expires_at", new Date().toISOString());
 
-    isFirstSolve = !priorSolved;
+    let xpMultiplier = 1.0;
+    let pointsMultiplier = 1.0;
 
-    if (isFirstSolve) {
-      // Calculate active buffs
-      const { data: activeBuffs } = await sb
-        .from("arena_active_buffs")
-        .select("buff_type, buff_value")
-        .eq("user_id", dev.id)
-        .gt("expires_at", new Date().toISOString());
-
-      let xpMultiplier = 1.0;
-      let pointsMultiplier = 1.0;
-
-      if (activeBuffs) {
-        for (const buff of activeBuffs) {
-          if (buff.buff_type === "xp_boost") {
-            xpMultiplier += (buff.buff_value - 1.0);
-          } else if (buff.buff_type === "reward_multiplier") {
-            xpMultiplier += (buff.buff_value - 1.0);
-            pointsMultiplier += (buff.buff_value - 1.0);
-          }
+    if (activeBuffs) {
+      for (const buff of activeBuffs) {
+        if (buff.buff_type === "xp_boost") {
+          xpMultiplier += (buff.buff_value - 1.0);
+        } else if (buff.buff_type === "reward_multiplier") {
+          xpMultiplier += (buff.buff_value - 1.0);
+          pointsMultiplier += (buff.buff_value - 1.0);
         }
       }
+    }
 
-      grantedXp = Math.round(baseXp * xpMultiplier);
-      grantedPoints = Math.round(basePoints * pointsMultiplier);
+    grantedXp = Math.round(baseXp * xpMultiplier);
+    grantedPoints = Math.round(basePoints * pointsMultiplier);
 
-      // Grant Points
-      const { data: devRecord } = await sb
-        .from("developers")
-        .select("points")
-        .eq("id", dev.id)
-        .single();
-      
-      const newPoints = (devRecord?.points || 0) + grantedPoints;
-      await sb
-        .from("developers")
-        .update({ points: newPoints })
-        .eq("id", dev.id);
+    // ── Atomic first-solve claim ──────────────────────────────────
+    // claim_first_solve() does an INSERT ... ON CONFLICT DO NOTHING
+    // on the arena_first_solves table and atomically increments
+    // developers.points inside the same DB function — only the first
+    // concurrent caller wins (won_race = true); all others get false.
+    const { data: claimResult, error: claimError } = await sb.rpc(
+      "claim_first_solve",
+      {
+        p_user_id:      dev.id,
+        p_challenge_id: challenge_id || null,
+        p_problem_id:   challenge_id ? null : problem_id,
+        p_points:       grantedPoints,
+        p_xp:           grantedXp,
+      }
+    );
 
-      // Grant XP via RPC
-      const { data: xpData } = await sb.rpc("grant_xp", {
+    if (claimError) {
+      console.error("[arena/submit] claim_first_solve error:", claimError);
+      return NextResponse.json({ error: "Failed to process submission" }, { status: 500 });
+    }
+
+    isFirstSolve = claimResult?.[0]?.won_race === true;
+
+    if (isFirstSolve) {
+      // Grant XP via existing RPC (idempotency handled by claim_first_solve above)
+      await sb.rpc("grant_xp", {
         p_developer_id: dev.id,
         p_source: `arena_${difficulty}`,
-        p_amount: grantedXp
+        p_amount: grantedXp,
       });
 
-      // Roll for items
+      // Roll for item drops
       droppedItems = await rollItemDrops(sb, difficulty, dev.id);
     }
   }
@@ -263,16 +219,17 @@ export async function POST(request: NextRequest) {
 
   if (isAccepted && isFirstSolve) {
     problemsSolved += 1;
-    // Add rating ELO-like increments
     if (difficulty === "easy") rating += 10;
     else if (difficulty === "medium") rating += 20;
     else if (difficulty === "hard") rating += 40;
 
-    // Manage streaks
     const lastSolvedDateStr = ratingRecord?.last_solved_at
       ? new Date(ratingRecord.last_solved_at).toISOString().split("T")[0]
       : null;
-    const yesterdayStr = new Date(Date.now() - 24 * 3600 * 1000).toISOString().split("T")[0];
+    // Use UTC date components — avoids DST ms-subtraction issue
+    const now = new Date();
+    const yesterdayDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+    const yesterdayStr = yesterdayDate.toISOString().split("T")[0];
 
     if (lastSolvedDateStr !== todayStr) {
       if (lastSolvedDateStr === yesterdayStr) {
@@ -294,7 +251,7 @@ export async function POST(request: NextRequest) {
     current_streak: currentStreak,
     best_streak: bestStreak,
     last_solved_at: isAccepted && isFirstSolve ? new Date().toISOString() : ratingRecord?.last_solved_at,
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
   });
 
   return NextResponse.json({
@@ -303,16 +260,16 @@ export async function POST(request: NextRequest) {
     is_first_solve: isFirstSolve,
     rewards: {
       points: grantedPoints,
-      xp: grantedXp
+      xp: grantedXp,
     },
-    dropped_items: droppedItems.map(item => ({
+    dropped_items: droppedItems.map((item) => ({
       id: item.id,
       name: item.name,
       slug: item.slug,
       rarity: item.rarity,
       item_type: item.item_type,
-      icon_path: item.icon_path
-    }))
+      icon_path: item.icon_path,
+    })),
   });
 }
 
