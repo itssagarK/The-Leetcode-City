@@ -61,6 +61,7 @@ export default function FounderMessage({ onClose }: FounderMessageProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const typingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const charIndexRef = useRef(0);
 
   const paragraphs = MESSAGES[lang];
@@ -71,6 +72,10 @@ export default function FounderMessage({ onClose }: FounderMessageProps) {
     requestAnimationFrame(() => {
       if (overlayRef.current) overlayRef.current.style.opacity = "1";
     });
+    
+    return () => {
+      if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
+    };
   }, []);
 
   // Blinking cursor
