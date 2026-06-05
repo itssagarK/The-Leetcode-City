@@ -9,6 +9,7 @@ export interface LiveSession {
   avatarUrl: string;
   status: "active" | "idle";
   language?: string;
+  lastUpdated?: number;
 }
 
 export function useCodingPresence() {
@@ -28,12 +29,14 @@ export function useCodingPresence() {
       .then((data) => {
         if (data.developers) {
           const map = new Map<string, LiveSession>();
+          const now = Date.now();
           for (const d of data.developers) {
             map.set(d.githubLogin, {
               githubLogin: d.githubLogin,
               avatarUrl: d.avatarUrl,
               status: d.status,
               language: d.language,
+              lastUpdated: now,
             });
           }
           mapRef.current = map;
@@ -64,6 +67,7 @@ export function useCodingPresence() {
           avatarUrl: payload.avatarUrl,
           status: payload.status ?? "active",
           language: payload.language,
+          lastUpdated: Date.now(),
         });
         updateMap();
       })
@@ -75,16 +79,34 @@ export function useCodingPresence() {
         .then((r) => r.json())
         .then((data) => {
           if (data.developers) {
-            const map = new Map<string, LiveSession>();
+            const currentMap = mapRef.current;
+            const fetchedLogins = new Set<string>();
+            const now = Date.now();
+
             for (const d of data.developers) {
-              map.set(d.githubLogin, {
-                githubLogin: d.githubLogin,
-                avatarUrl: d.avatarUrl,
-                status: d.status,
-                language: d.language,
-              });
+              fetchedLogins.add(d.githubLogin);
+              const existing = currentMap.get(d.githubLogin);
+              // Overwrite only if we haven't received a recent heartbeat (within last 35s)
+              if (!existing || !existing.lastUpdated || (now - existing.lastUpdated > 35_000)) {
+                currentMap.set(d.githubLogin, {
+                  githubLogin: d.githubLogin,
+                  avatarUrl: d.avatarUrl,
+                  status: d.status,
+                  language: d.language,
+                  lastUpdated: now,
+                });
+              }
             }
-            mapRef.current = map;
+
+            // Remove users that are missing from the server response AND haven't broadcasted recently
+            for (const [login, session] of currentMap.entries()) {
+              if (!fetchedLogins.has(login)) {
+                if (!session.lastUpdated || (now - session.lastUpdated > 35_000)) {
+                  currentMap.delete(login);
+                }
+              }
+            }
+            
             updateMap();
           }
         })
