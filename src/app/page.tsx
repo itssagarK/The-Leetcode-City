@@ -4,6 +4,7 @@ import SearchBar from "@/components/SearchBar";
 import UserProfile from "@/components/UserProfile";
 import ActionToolbar from "@/components/ActionToolbar";
 import CodexModal from "@/components/CodexModal";
+import { WeatherProvider } from '@/context/WeatherContext';
 
 import {
   useState,
@@ -695,6 +696,7 @@ function HomeContent() {
     }
   }, [codingPanelOpen, hasVsCodeKey]);
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionResolved, setSessionResolved] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [purchasedItem, setPurchasedItem] = useState<string | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<CityBuilding | null>(
@@ -951,10 +953,12 @@ function HomeContent() {
           setLinkedLeetCodeUsername(null);
         } finally {
           setLinkStatusResolved(true);
+          setSessionResolved(true);
         }
       } else {
         setLinkedLeetCodeUsername(null);
         setLinkStatusResolved(true);
+        setSessionResolved(true);
       }
     };
 
@@ -1005,7 +1009,8 @@ function HomeContent() {
     const silentRefresh = async () => {
       try {
         const res = await fetch(
-          `/api/dev/${encodeURIComponent(linkedLeetCodeUsername)}?refresh=true`,
+          `/api/dev/${encodeURIComponent(linkedLeetCodeUsername)}?refresh=true&t=${Date.now()}`,
+          { cache: "no-store" },
         );
         if (!res.ok) return;
         const devData = await res.json();
@@ -1071,7 +1076,7 @@ function HomeContent() {
     ""
   ).toLowerCase();
   const selfLogin = (linkedLeetCodeUsername ?? authLogin).toLowerCase();
-  const identityResolved = !session || linkStatusResolved;
+  const identityResolved = sessionResolved && (!session || linkStatusResolved);
 
   // Extra guard: check if selected building is own by comparing linked account
   const isOwnBuilding =
@@ -2086,7 +2091,11 @@ function HomeContent() {
         Boolean,
       );
       await Promise.all(
-        missing.map((login) => fetch(`/api/dev/${encodeURIComponent(login!)}`)),
+        missing.map((login) =>
+          fetch(`/api/dev/${encodeURIComponent(login!)}?t=${Date.now()}`, {
+            cache: "no-store",
+          }),
+        ),
       );
       const updated = await reloadCity(true);
       if (!updated) return;
@@ -2195,7 +2204,10 @@ function HomeContent() {
       );
 
       // Add/refresh the developer
-      const devRes = await fetch(`/api/dev/${encodeURIComponent(trimmed)}`);
+      const devRes = await fetch(
+        `/api/dev/${encodeURIComponent(trimmed)}?t=${Date.now()}`,
+        { cache: "no-store" },
+      );
       const devData = await devRes.json();
 
       if (!devRes.ok) {
@@ -2401,8 +2413,9 @@ function HomeContent() {
     if (!selectedBuilding) return;
     setRefreshingStats(true);
     try {
-      const res = await fetch(
-        `/api/dev/${encodeURIComponent(selectedBuilding.login)}?refresh=true`,
+       const res = await fetch(
+        `/api/dev/${encodeURIComponent(selectedBuilding.login)}?refresh=true&t=${Date.now()}`,
+        { cache: "no-store" },
       );
       if (!res.ok) throw new Error("Failed to refresh stats");
       const devData = await res.json();
@@ -4956,7 +4969,8 @@ function HomeContent() {
                   )}
 
                 {/* A7: Show equipped items on other devs' buildings (mimetic desire) */}
-                {!isOwnBuilding &&
+                {identityResolved &&
+                  !isOwnBuilding &&
                   (() => {
                     const equipped: string[] = [];
                     if (selectedBuilding.loadout?.crown)
@@ -6599,7 +6613,9 @@ function HomeContent() {
 export default function Home() {
   return (
     <Suspense>
-      <HomeContent />
+      <WeatherProvider>
+        <HomeContent />
+      </WeatherProvider>
     </Suspense>
   );
 }

@@ -34,8 +34,9 @@ const ActionToolbar: React.FC<ActionToolbarProps> = ({
       <button
         onClick={cycleTheme}
         className="btn-press flex items-center gap-1.5 border-[3px] border-border bg-bg/70 px-2.5 py-1 text-[10px] backdrop-blur-sm transition-colors hover:border-border-light"
+        aria-label={`Cycle theme: currently ${theme.name}`}
       >
-        <span style={{ color: theme.accent }}>&#9654;</span>
+        <span style={{ color: theme.accent }} aria-hidden="true">&#9654;</span>
         <span className="text-cream">{theme.name}</span>
         <span className="text-dim">{themeIndex + 1}/{themesLength}</span>
       </button>
@@ -56,8 +57,9 @@ const ActionToolbar: React.FC<ActionToolbarProps> = ({
             ? "border-amber-500/80 bg-amber-500/10 text-amber-400 hover:border-amber-400"
             : "border-border bg-bg/70 text-cream hover:border-border-light"
         }`}
+        aria-label={dayNightCycleActive ? "Turn off day/night cycle" : "Turn on day/night cycle"}
       >
-        <span style={{ color: theme.accent }}>&#9654;</span>
+        <span style={{ color: theme.accent }} aria-hidden="true">&#9654;</span>
         <span>{dayNightCycleActive ? "CYCLE ON" : "CYCLE OFF"}</span>
       </button>
  
@@ -65,8 +67,9 @@ const ActionToolbar: React.FC<ActionToolbarProps> = ({
       <button
         onClick={cycleWeather}
         className="btn-press flex items-center gap-1.5 border-[3px] border-border bg-bg/70 px-2.5 py-1 text-[10px] backdrop-blur-sm transition-colors hover:border-border-light text-cream"
+        aria-label={`Cycle weather: currently ${weatherMode}`}
       >
-        <span style={{ color: theme.accent }}>&#9654;</span>
+        <span style={{ color: theme.accent }} aria-hidden="true">&#9654;</span>
         <span>WEATHER: {weatherMode.toUpperCase()}</span>
       </button>
 
@@ -78,8 +81,9 @@ const ActionToolbar: React.FC<ActionToolbarProps> = ({
         onClick={replayIntro}
         className="btn-press flex items-center gap-1 border-[3px] border-border bg-bg/70 px-2 py-1 text-[10px] backdrop-blur-sm transition-colors hover:border-border-light"
         title="Replay intro"
+        aria-label="Replay intro"
       >
-        <span style={{ color: theme.accent }}>&#9654;</span>
+        <span style={{ color: theme.accent }} aria-hidden="true">&#9654;</span>
         <span className="text-cream">Intro</span>
       </button>
     </div>

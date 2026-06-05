@@ -670,7 +670,7 @@ export default function ShopClient({
   const [isTogglingStyle, setIsTogglingStyle] = useState(false);
   const [freezeCount, setFreezeCount] = useState(streakFreezesAvailable);
   const [buyingItem, setBuyingItem] = useState<string | null>(null);
-  const [buyingProvider, setBuyingProvider] = useState<"stripe" | "nowpayments" | "abacatepay" | "points" | null>(null);
+  const [buyingProvider, setBuyingProvider] = useState<"stripe" | "nowpayments" | "abacatepay" | "cashfree" | "points" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -686,6 +686,7 @@ export default function ShopClient({
   });
 
   const [isBrazil, setIsBrazil] = useState(false);
+  const [isIndia, setIsIndia] = useState(false);
   useEffect(() => {
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
@@ -699,9 +700,12 @@ export default function ShopClient({
         "America/Santarem",
       ]);
       setIsBrazil(brTimezones.has(tz));
+      // Indian IANA timezone
+      setIsIndia(tz === "Asia/Kolkata" || tz === "Asia/Calcutta");
     } catch (err) {
       console.warn("[components/ShopClient.tsx] error:", err);
       setIsBrazil(false);
+      setIsIndia(false);
     }
   }, []);
 
@@ -809,6 +813,27 @@ export default function ShopClient({
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [hasChanges]);
+
+  // Save billboard local override on changes
+  const isFirstBillboardRender = useRef(true);
+  useEffect(() => {
+    if (isFirstBillboardRender.current) {
+      isFirstBillboardRender.current = false;
+      return;
+    }
+    try {
+      if (billboardImages && billboardImages.length > 0) {
+        localStorage.setItem(
+          "leetcodecity:billboard_override",
+          JSON.stringify({ developerId, value: billboardImages, ts: Date.now() })
+        );
+      } else {
+        localStorage.removeItem("leetcodecity:billboard_override");
+      }
+    } catch (err) {
+      console.warn("[ShopClient] Failed to save billboard override:", err);
+    }
+  }, [billboardImages, developerId]);
 
   // Auto-upload pending billboard image after purchase redirect
   useEffect(() => {
@@ -945,17 +970,25 @@ export default function ShopClient({
         setSavedCustomization(itemId);
         setTimeout(() => setSavedCustomization(null), 2000);
         try{
-          if (itemId === "custom_color" && payload.color) {
-            localStorage.setItem(
-              "leetcodecity:color_override",
-              JSON.stringify({ developerId, value: payload.color, ts: Date.now() })
-            );
+          if (itemId === "custom_color") {
+            if (payload.color) {
+              localStorage.setItem(
+                "leetcodecity:color_override",
+                JSON.stringify({ developerId, value: payload.color, ts: Date.now() })
+              );
+            } else {
+              localStorage.removeItem("leetcodecity:color_override");
+            }
           }
-          if (itemId === "billboard" && payload.images) {
-            localStorage.setItem(
-              "leetcodecity:billboard_override",
-              JSON.stringify({ developerId, value: payload.images, ts: Date.now() })
-            )
+          if (itemId === "led_banner") {
+            if (payload.text) {
+              localStorage.setItem(
+                "leetcodecity:led_banner_override",
+                JSON.stringify({ developerId, value: payload.text, ts: Date.now() })
+              );
+            } else {
+              localStorage.removeItem("leetcodecity:led_banner_override");
+            }
           }
         } catch (err) {
             console.warn("[ShopClient] localStorage write failed:", err);
@@ -1065,7 +1098,7 @@ export default function ShopClient({
 
 
   const checkout = useCallback(
-    async (itemId: string, provider: "stripe" | "nowpayments" | "abacatepay" = "stripe") => {
+    async (itemId: string, provider: "stripe" | "nowpayments" | "abacatepay" | "cashfree" = "stripe") => {
       if (buyingItem) return;
       setBuyingItem(itemId);
       setBuyingProvider(provider);
@@ -1099,7 +1132,24 @@ export default function ShopClient({
           return;
         }
 
-        if (data.brCode) {
+        if (data.paymentSessionId) {
+          // Cashfree: load SDK and open checkout
+          try {
+            const { load } = await import("@cashfreepayments/cashfree-js");
+            const cashfreeEnv = process.env.NEXT_PUBLIC_CASHFREE_ENV === "PRODUCTION" ? "production" : "sandbox";
+            const cashfree = await load({ mode: cashfreeEnv as "sandbox" | "production" });
+            const result = await cashfree.checkout({
+              paymentSessionId: data.paymentSessionId,
+              redirectTarget: "_self",
+            });
+            if (result.error) {
+              setError(result.error.message || "Payment failed");
+            }
+          } catch (sdkErr) {
+            console.error("Cashfree SDK error:", sdkErr);
+            setError("Payment gateway failed to load. Try again.");
+          }
+        } else if (data.brCode) {
           const item = items.find((i) => i.id === itemId);
           setPixModal({
             brCode: data.brCode,
@@ -1342,7 +1392,7 @@ export default function ShopClient({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="border-[3px] border-border bg-bg p-6 text-center">
             <div className="mb-3 text-2xl animate-pulse">{ITEM_EMOJIS[buyingItem] ?? "🛒"}</div>
-            <p className="text-xs text-cream">{buyingProvider === "abacatepay" ? "Generating PIX..." : "Redirecting to checkout..."}</p>
+            <p className="text-xs text-cream">{buyingProvider === "abacatepay" ? "Generating PIX..." : buyingProvider === "cashfree" ? "Opening UPI..." : "Redirecting to checkout..."}</p>
             <p className="mt-1 text-[9px] text-muted normal-case">Please wait</p>
           </div>
         </div>
@@ -1722,6 +1772,16 @@ export default function ShopClient({
                                       {isBuying ? "..." : "Pay with PIX"}
                                     </button>
                                   )}
+                                  {isIndia && (
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setConfirmBuyItem(null); checkout(itemId, "cashfree"); }}
+                                      disabled={isBuying}
+                                      className="btn-press w-full py-1 text-[9px] text-bg disabled:opacity-40"
+                                      style={{ backgroundColor: "#6739b7", boxShadow: "1px 1px 0 0 #4a2882" }}
+                                    >
+                                      {isBuying ? "..." : "Pay with UPI ₹"}
+                                    </button>
+                                  )}
                                   {shopItem && shopItem.price_points != null && (
                                     <button
                                       onClick={(e) => { e.stopPropagation(); setConfirmBuyItem(null); handleBuyWithPoints(itemId); }}
@@ -1804,250 +1864,7 @@ export default function ShopClient({
                 );
               })}
 
-              {/* Profile Title Section */}
-              <div className="border-[3px] border-border bg-bg-raised p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm" style={{ color: ACCENT }}>
-                    Profile Title & Badge
-                  </h3>
-                  <span className="text-[9px] text-muted normal-case">
-                    Identity customization
-                  </span>
-                </div>
 
-                <p className="mb-4 text-[10px] text-muted normal-case">
-                  Choose which badge and title from the Coding Arena to display on your developer profile page.
-                </p>
-
-                {ownedTitles.length === 0 ? (
-                  <div className="border-[2px] border-dashed border-border p-3 text-center text-[10px] text-muted normal-case">
-                    You haven&apos;t unlocked any title badges in the Arena yet.
-                    <br />
-                    <Link href="/arena" className="mt-2 inline-block hover:underline" style={{ color: ACCENT }}>
-                      Go to the Coding Arena &rarr;
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {/* Auto-detect option */}
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => setSelectedTitle("auto")}
-                        className={`btn-press px-3 py-1.5 text-[10px] border-[2px] transition-all flex items-center gap-1.5 ${
-                          (selectedTitle === "auto" || selectedTitle === null)
-                            ? "border-[#39d353] bg-[rgba(57,211,83,0.1)] text-cream"
-                            : "border-border text-muted hover:border-border-light bg-bg-card"
-                        }`}
-                      >
-                        <span className="text-xs">⚡</span>
-                        Auto-Detect (Highest)
-                      </button>
-
-                      {[
-                        { slug: "title_creator", name: "City Creator", titleText: "The Architect", color: "#ec4899", icon: "/assets/items/crown_of_code.png" },
-                        { slug: "title_lead_dev", name: "Core Engineer", titleText: "Root Access", color: "#10b981", icon: "/assets/items/celestial_orb.png" },
-                        { slug: "title_sys_op", name: "Database Master", titleText: "SysOp", color: "#3b82f6", icon: "/assets/items/soul_gem.png" },
-                        { slug: "crown_of_code", name: "Crown of Code", titleText: "Code King/Queen", color: "#f59e0b", icon: "/assets/items/crown_of_code.png" },
-                        { slug: "badge_legendary", name: "Legendary Sentinel", titleText: "The Sentinel", color: "#a855f7", icon: "/assets/items/badge_legendary.png" },
-                        { slug: "badge_diamond", name: "Diamond Grandmaster", titleText: "The Grandmaster", color: "#06b6d4", icon: "/assets/items/badge_diamond.png" },
-                        { slug: "badge_platinum", name: "Platinum Architect", titleText: "The Architect", color: "#3b82f6", icon: "/assets/items/badge_platinum.png" },
-                        { slug: "badge_gold", name: "Gold Developer", titleText: "The Builder", color: "#eab308", icon: "/assets/items/badge_gold.png" },
-                        { slug: "badge_silver", name: "Silver Hacker", titleText: "The Script Kiddie", color: "#94a3b8", icon: "/assets/items/badge_silver.png" },
-                        { slug: "badge_bronze", name: "Bronze Coder", titleText: "The Apprentice", color: "#b45309", icon: "/assets/items/badge_bronze.png" },
-                      ].map((t) => {
-                        const isOwned = ownedTitles.includes(t.slug);
-                        if (!isOwned) return null;
-                        const isSelected = selectedTitle === t.slug;
-
-                        return (
-                          <button
-                            key={t.slug}
-                            onClick={() => setSelectedTitle(t.slug)}
-                            className={`btn-press px-3 py-1.5 text-[10px] border-[2px] transition-all flex items-center gap-1.5 ${
-                              isSelected
-                                ? "border-[#39d353] bg-[rgba(57,211,83,0.1)] text-cream"
-                                : "border-border text-muted hover:border-border-light bg-bg-card"
-                            }`}
-                            style={{ color: t.color, borderColor: isSelected ? "#39d353" : undefined }}
-                          >
-                            {t.icon && (
-                              <Image
-                                src={t.icon}
-                                alt={t.name}
-                                width={14}
-                                height={14}
-                                className="inline-block flex-shrink-0"
-                              />
-                            )}
-                            {t.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                      <div className="flex-1">
-                        {(() => {
-                          const available = [
-                            { slug: "title_creator", name: "City Creator", titleText: "The Architect", color: "#ec4899" },
-                            { slug: "title_lead_dev", name: "Core Engineer", titleText: "Root Access", color: "#10b981" },
-                            { slug: "title_sys_op", name: "Database Master", titleText: "SysOp", color: "#3b82f6" },
-                            { slug: "crown_of_code", name: "Crown of Code", titleText: "Code King/Queen", color: "#f59e0b" },
-                            { slug: "badge_legendary", name: "Legendary Sentinel", titleText: "The Sentinel", color: "#a855f7" },
-                            { slug: "badge_diamond", name: "Diamond Grandmaster", titleText: "The Grandmaster", color: "#06b6d4" },
-                            { slug: "badge_platinum", name: "Platinum Architect", titleText: "The Architect", color: "#3b82f6" },
-                            { slug: "badge_gold", name: "Gold Developer", titleText: "The Builder", color: "#eab308" },
-                            { slug: "badge_silver", name: "Silver Hacker", titleText: "The Script Kiddie", color: "#94a3b8" },
-                            { slug: "badge_bronze", name: "Bronze Coder", titleText: "The Apprentice", color: "#b45309" },
-                          ];
-
-                          let activeSlug = selectedTitle;
-                          let suffix = " [Manual]";
-                          if (!selectedTitle || selectedTitle === "auto") {
-                            const highest = available.find(t => ownedTitles.includes(t.slug));
-                            activeSlug = highest?.slug ?? null;
-                            suffix = " [Auto-detected]";
-                          }
-
-                          if (!activeSlug) {
-                            return <div className="text-[10px] text-muted normal-case italic">Preview: No active title</div>;
-                          }
-
-                          const active = available.find(t => t.slug === activeSlug);
-                          if (!active) return null;
-
-                          const bannerImages: Record<string, string> = {
-                            title_creator: "/assets/banners/banner_city_creator.png",
-                            title_lead_dev: "/assets/banners/banner_core_engineer.png",
-                            title_sys_op: "/assets/banners/banner_database_master.png",
-                          };
-
-                          const imageUrl = bannerImages[active.slug];
-
-                          if (imageUrl) {
-                            return (
-                              <div className="flex flex-col gap-1 items-start select-none">
-                                <div className="relative h-8 w-[220px] border-[2px] border-border bg-[#1b1921] overflow-hidden">
-                                  <Image
-                                    src={imageUrl}
-                                    alt={active.name}
-                                    fill
-                                    sizes="220px"
-                                    className="object-fill"
-                                    style={{ imageRendering: "pixelated" }}
-                                  />
-                                </div>
-                                <span className="text-[8px] text-muted normal-case">{active.name}{suffix}</span>
-                              </div>
-                            );
-                          }
-
-                          // Dynamic HTML/CSS banner
-                          const symbols: Record<string, string> = {
-                            badge_bronze: "[ >_ ] ⛭",
-                            badge_silver: "[ $ ] ⛭",
-                            badge_gold: "[ ■ ] ⚒",
-                            badge_platinum: "[ ❖ ] ✦",
-                            badge_diamond: "[ ◆ ] ✦",
-                            badge_legendary: "[ ⚔ ] ✦",
-                            crown_of_code: "[ ♔ ] ✦",
-                          };
-
-                          const symbol = symbols[active.slug] ?? "[ ★ ]";
-
-                          if (active.slug === "badge_platinum" || active.slug === "badge_diamond") {
-                            // Version 2
-                            return (
-                              <div className="flex flex-col gap-1 items-start">
-                                <div
-                                  className="relative flex items-center gap-2.5 py-1.5 px-4 text-[9px] font-bold tracking-wide border-[2.5px] border-solid"
-                                  style={{
-                                    borderColor: active.color,
-                                    backgroundColor: "#1b1921",
-                                    color: active.color,
-                                    boxShadow: `0 0 6px ${active.color}22`,
-                                  }}
-                                >
-                                  <div className="absolute top-0 left-0 w-1.5 h-1.5 border-t-[2px] border-l-[2px]" style={{ borderColor: active.color }} />
-                                  <div className="absolute top-0 right-0 w-1.5 h-1.5 border-t-[2px] border-r-[2px]" style={{ borderColor: active.color }} />
-                                  <div className="absolute bottom-0 left-0 w-1.5 h-1.5 border-b-[2px] border-l-[2px]" style={{ borderColor: active.color }} />
-                                  <div className="absolute bottom-0 right-0 w-1.5 h-1.5 border-b-[2px] border-r-[2px]" style={{ borderColor: active.color }} />
-                                  <span className="font-mono text-[10px]">{symbol}</span>
-                                  <span>{active.name.toUpperCase()}</span>
-                                </div>
-                                <span className="text-[8px] text-muted normal-case">{active.name}{suffix}</span>
-                              </div>
-                            );
-                          }
-
-                          if (active.slug === "badge_legendary" || active.slug === "crown_of_code") {
-                            // Version 3
-                            return (
-                              <div className="flex flex-col gap-1 items-start">
-                                <div className="flex items-center">
-                                  <div className="w-3 h-5 border-y-[2px] border-l-[2px] flex-shrink-0" style={{
-                                    borderColor: active.color,
-                                    backgroundColor: "#1b1921",
-                                    clipPath: "polygon(100% 0, 0 50%, 100% 100%)",
-                                  }} />
-                                  <div
-                                    className="flex items-center gap-2.5 py-1.5 px-3 text-[9px] font-bold tracking-wide border-y-[2px] border-x-[1px]"
-                                    style={{
-                                      borderColor: active.color,
-                                      backgroundColor: "#1b1921",
-                                      color: active.color,
-                                    }}
-                                  >
-                                    <span className="font-mono text-[10px]">{symbol}</span>
-                                    <span>{active.name.toUpperCase()}</span>
-                                  </div>
-                                  <div className="w-3 h-5 border-y-[2px] border-r-[2px] flex-shrink-0" style={{
-                                    borderColor: active.color,
-                                    backgroundColor: "#1b1921",
-                                    clipPath: "polygon(0 0, 100% 50%, 0 100%)",
-                                  }} />
-                                </div>
-                                <span className="text-[8px] text-muted normal-case">{active.name}{suffix}</span>
-                              </div>
-                            );
-                          }
-
-                          // Version 1
-                          return (
-                            <div className="flex flex-col gap-1 items-start">
-                              <div
-                                className="flex items-center gap-2.5 py-1.5 px-3 text-[9px] font-bold tracking-wide border-[3px] border-double"
-                                style={{
-                                  borderColor: active.color,
-                                  backgroundColor: "#1b1921",
-                                  color: active.color,
-                                }}
-                              >
-                                <span className="font-mono text-[10px]">{symbol}</span>
-                                <span>{active.name.toUpperCase()}</span>
-                              </div>
-                              <span className="text-[8px] text-muted normal-case">{active.name}{suffix}</span>
-                            </div>
-                          );
-                        })()}
-                      <button
-                        onClick={() => handleSaveCustomization("selected_title", { slug: selectedTitle })}
-                        disabled={savingCustomization === "selected_title"}
-                        className="btn-press px-4 py-1.5 text-[9px] text-bg disabled:opacity-40"
-                        style={{
-                          backgroundColor: savedCustomization === "selected_title" ? "#39d353" : ACCENT,
-                          boxShadow: `1px 1px 0 0 ${SHADOW}`,
-                        }}
-                      >
-                        {savingCustomization === "selected_title"
-                          ? "Saving..."
-                          : savedCustomization === "selected_title"
-                          ? "Saved!"
-                          : "Save Active Title"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* Consumables section */}
               {(() => {
@@ -2139,6 +1956,16 @@ export default function ShopClient({
                                   {isBuying ? "..." : "Pay with PIX"}
                                 </button>
                               )}
+                              {isIndia && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setConfirmBuyItem(null); checkout("streak_freeze", "cashfree"); }}
+                                  disabled={isBuying}
+                                  className="btn-press w-full py-1 text-[9px] text-bg disabled:opacity-40"
+                                  style={{ backgroundColor: "#6739b7", boxShadow: "1px 1px 0 0 #4a2882" }}
+                                >
+                                  {isBuying ? "..." : "Pay with UPI ₹"}
+                                </button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -2150,7 +1977,7 @@ export default function ShopClient({
 
               {/* Payment note */}
               <p className="text-center text-[10px] text-dim normal-case">
-                Payment via Stripe
+                Payment via Stripe{isIndia ? ", UPI" : ""}{isBrazil ? ", PIX" : ""} & Crypto
               </p>
             </div>
           </div>
