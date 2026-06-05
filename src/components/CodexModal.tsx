@@ -12,10 +12,12 @@ interface CodexModalProps {
 
 interface CodexData {
   loggedIn: boolean;
+  developerId?: number;
   stats: Record<string, any> | null;
   unlockedAchievements: string[];
   ownedItems: string[];
   ownedTitles: string[];
+  selectedTitle?: string | null;
   achievements: any[];
   items: any[];
 }
@@ -50,6 +52,19 @@ const CATEGORY_SYMBOLS: Record<string, string> = {
   repos: "[ ☱ ]",
 };
 
+const EQUIPABLE_TITLES = [
+  "title_creator",
+  "title_lead_dev",
+  "title_sys_op",
+  "crown_of_code",
+  "badge_legendary",
+  "badge_diamond",
+  "badge_platinum",
+  "badge_gold",
+  "badge_silver",
+  "badge_bronze"
+];
+
 export default function CodexModal({ isOpen, onClose, accentColor, shadowColor }: CodexModalProps) {
   const [data, setData] = useState<CodexData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +72,8 @@ export default function CodexModal({ isOpen, onClose, accentColor, shadowColor }
   const [filter, setFilter] = useState<FilterType>("all");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+  const [equippingId, setEquippingId] = useState<string | null>(null);
 
   // Close on Escape key
   useEffect(() => {
@@ -73,16 +90,72 @@ export default function CodexModal({ isOpen, onClose, accentColor, shadowColor }
     if (!isOpen) return;
     setLoading(true);
     fetch("/api/codex")
-      .then((res) => res.json())
-      .then((codexData) => {
+      .then(async (res) => {
+        const codexData = await res.json();
+        if (!res.ok || codexData.error || !Array.isArray(codexData.achievements) || !Array.isArray(codexData.items)) {
+          throw new Error(codexData.error || "Malformed codex data");
+        }
         setData(codexData);
+        setSelectedTitle(codexData.selectedTitle || null);
         setLoading(false);
       })
       .catch((err) => {
         console.error("Failed to load Codex data:", err);
+        setData({
+          loggedIn: false,
+          stats: null,
+          unlockedAchievements: [],
+          ownedItems: [],
+          ownedTitles: [],
+          selectedTitle: null,
+          achievements: [],
+          items: [],
+        });
+        setSelectedTitle(null);
         setLoading(false);
       });
   }, [isOpen]);
+
+  const handleEquipTitle = async (slug: string | null) => {
+    setEquippingId(slug || "unequip");
+    try {
+      const res = await fetch("/api/customizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          item_id: "selected_title",
+          slug,
+        }),
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        setSelectedTitle(resData.slug);
+        if (data && data.developerId) {
+          try {
+            if (resData.slug) {
+              localStorage.setItem(
+                "leetcodecity:selected_title_override",
+                JSON.stringify({ developerId: data.developerId, value: resData.slug, ts: Date.now() })
+              );
+            } else {
+              localStorage.removeItem("leetcodecity:selected_title_override");
+            }
+          } catch (e) {
+            console.warn("[CodexModal] Failed to set title override:", e);
+          }
+        }
+      } else {
+        alert(resData.error || "Failed to save title customization");
+      }
+    } catch (err) {
+      console.error("Error equipping title:", err);
+      alert("Error saving title customization");
+    } finally {
+      setEquippingId(null);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -668,6 +741,33 @@ export default function CodexModal({ isOpen, onClose, accentColor, shadowColor }
                           </div>
                         );
                       })()}
+                      {data?.loggedIn && EQUIPABLE_TITLES.includes(activeItem.slug) && activeItem.progress.status === "claimed" && (
+                        <div className="mt-3">
+                          <button
+                            onClick={() => {
+                              if (selectedTitle === activeItem.slug) {
+                                handleEquipTitle(null);
+                              } else {
+                                handleEquipTitle(activeItem.slug);
+                              }
+                            }}
+                            disabled={equippingId !== null}
+                            className="btn-press px-4 py-1.5 text-[9px] font-bold border-[2px] transition-colors w-full"
+                            style={{
+                              backgroundColor: selectedTitle === activeItem.slug ? "#ff4444" : "#39d353",
+                              borderColor: selectedTitle === activeItem.slug ? "#b30000" : "#238636",
+                              boxShadow: selectedTitle === activeItem.slug ? `1px 1px 0 0 #b30000` : `1px 1px 0 0 #238636`,
+                              color: "#000",
+                            }}
+                          >
+                            {equippingId === activeItem.slug || (equippingId === "unequip" && selectedTitle === activeItem.slug)
+                              ? "SAVING..."
+                              : selectedTitle === activeItem.slug
+                              ? "UNEQUIP TITLE"
+                              : "EQUIP TITLE"}
+                          </button>
+                        </div>
+                      )}
                       <hr className="border-border/30" />
                     </div>
                   )}

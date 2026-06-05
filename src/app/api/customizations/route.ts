@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { sanitizeLedBannerText } from "@/lib/sanitize-led-banner";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,6 @@ export async function GET(request: Request) {
  * @param {import('next/server').NextRequest} request
  */
 export async function POST(request: Request) {
-  // Auth required
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -75,7 +75,6 @@ export async function POST(request: Request) {
 
   const sb = getSupabaseAdmin();
 
-  // Validate developer
   const { data: dev } = await sb
     .from("developers")
     .select("id, github_login, claimed, claimed_by")
@@ -91,7 +90,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // Parse body
   let body: { item_id: string; color?: string | null; text?: string | null; slug?: string | null };
   try {
     body = await request.json();
@@ -108,12 +106,11 @@ export async function POST(request: Request) {
     );
   }
 
-  // Validate ownership (except for selected_title config which is a free menu settings)
   if (item_id !== "selected_title") {
     const { data: purchase } = await sb
       .from("purchases")
       .select("id")
-      .eq("developer_id", dev.id)
+      .or(`developer_id.eq.${dev.id},gifted_to.eq.${dev.id}`)
       .eq("item_id", item_id)
       .eq("status", "completed")
       .maybeSingle();
@@ -141,29 +138,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "This title is reserved for LeetCode City developers" }, { status: 403 });
     }
 
-    // Only check arena inventory for standard badges, not developer titles
     if (!isDevTitle) {
-      // Resolve item UUID from slug
+      // Resolve item UUID from slug (arena items)
       const { data: itemData } = await sb
         .from("arena_items")
         .select("id")
         .eq("slug", slug)
-        .single();
-
-      if (!itemData) {
-        return NextResponse.json({ error: "Invalid title slug" }, { status: 400 });
-      }
-
-      // Verify they own the item in arena_inventory
-      const { data: ownsItem } = await sb
-        .from("arena_inventory")
-        .select("id")
-        .eq("user_id", dev.id)
-        .eq("item_id", itemData.id)
         .maybeSingle();
 
-      if (!ownsItem) {
-        return NextResponse.json({ error: "You must unlock this title badge in the Arena first" }, { status: 403 });
+      if (itemData) {
+        // Verify they own the item in arena_inventory
+        const { data: ownsItem } = await sb
+          .from("arena_inventory")
+          .select("id")
+          .eq("user_id", dev.id)
+          .eq("item_id", itemData.id)
+          .maybeSingle();
+
+        if (!ownsItem) {
+          return NextResponse.json({ error: "You must unlock this title badge in the Arena first" }, { status: 403 });
+        }
+      } else {
+        // It might be a shop-purchased title (like crown_of_code)
+        const { data: ownsShopItem } = await sb
+          .from("purchases")
+          .select("id")
+          .or(`developer_id.eq.${dev.id},gifted_to.eq.${dev.id}`)
+          .eq("item_id", slug)
+          .eq("status", "completed")
+          .maybeSingle();
+          
+        if (!ownsShopItem) {
+           return NextResponse.json({ error: "Invalid title slug or you don't own this title" }, { status: 403 });
+        }
       }
     }
 
@@ -198,7 +205,11 @@ export async function POST(request: Request) {
   }
 
   if (item_id === "led_banner") {
-    if (!text) {
+    // Sanitize before checking emptiness — a string of only control chars
+    // should be treated the same as an explicit clear request.
+    const sanitized = text ? sanitizeLedBannerText(text) : null;
+
+    if (!sanitized) {
       const { error: deleteError } = await sb.from("developer_customizations")
         .delete().eq("developer_id", dev.id).eq("item_id", "led_banner");
       if (deleteError) return NextResponse.json({ error: "Failed to remove customization" }, { status: 500 });
@@ -206,10 +217,10 @@ export async function POST(request: Request) {
     }
 
     const { error: upsertError } = await sb.from("developer_customizations").upsert(
-      { developer_id: dev.id, item_id: "led_banner", config: { text: text.substring(0, 100) } },
+      { developer_id: dev.id, item_id: "led_banner", config: { text: sanitized } },
       { onConflict: "developer_id,item_id" }
     );
     if (upsertError) return NextResponse.json({ error: "Failed to save customization" }, { status: 500 });
-    return NextResponse.json({ success: true, text: text.substring(0, 100) });
+    return NextResponse.json({ success: true, text: sanitized });
   }
 }
