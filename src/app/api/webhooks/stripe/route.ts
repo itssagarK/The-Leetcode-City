@@ -92,8 +92,7 @@ export async function POST(request: Request) {
               ends_at: endsAt.toISOString(),
               purchaser_email: session.customer_details?.email ?? null,
             })
-            .eq("id", ad.id)
-            .eq("active", false);
+            .eq("id", ad.id);
 
           // Auto-deactivate the "advertise" placeholder if same vehicle type
           if (plan.vehicle === "plane") {
@@ -120,17 +119,39 @@ export async function POST(request: Request) {
           break;
         }
 
-        // Find the pending purchase
-        const { data: pending } = await sb
+        // ── Look up pending purchase by stripe_session_id (unique, stable) ──
+        // Previously looked up by (developer_id, item_id, "pending", "stripe")
+        // which was ambiguous for billboard (multiple pending rows) and broke
+        // when the checkout retry path deleted the original pending row.
+        // session.id is globally unique and stored at checkout creation time.
+        let { data: pending } = await sb
           .from("purchases")
-          .select("id, status")
-          .eq("developer_id", Number(developerId))
-          .eq("item_id", itemId)
-          .eq("status", "pending")
-          .eq("provider", "stripe")
+          .select("id, status, gifted_to")
+          .eq("stripe_session_id", session.id)
           .maybeSingle();
 
+        // Fallback for legacy rows created before this migration
+        // (no stripe_session_id stored) — narrow lookup by payment intent
+        if (!pending && paymentIntentId) {
+          const { data: legacyPending } = await sb
+            .from("purchases")
+            .select("id, status, gifted_to")
+            .eq("developer_id", Number(developerId))
+            .eq("item_id", itemId)
+            .eq("status", "pending")
+            .eq("provider", "stripe")
+            .is("stripe_session_id", null)
+            .maybeSingle();
+          pending = legacyPending;
+        }
+
         if (pending) {
+          // Skip if already completed (idempotency — duplicate webhook delivery)
+          if (pending.status === "completed") {
+            console.log("[stripe webhook] duplicate event for already-completed purchase:", pending.id);
+            break;
+          }
+
           await sb
             .from("purchases")
             .update({
@@ -155,7 +176,12 @@ export async function POST(request: Request) {
           }
 
           // Auto-equip if solo item in zone
-          const giftedTo = session.metadata?.gifted_to;
+          // Use gifted_to from the purchases row (not session metadata) — the
+          // row was created at checkout time with the correct gifted_to value,
+          // so this is correct even if the row was "abandoned" and re-matched.
+          const giftedTo = pending.gifted_to
+            ? String(pending.gifted_to)
+            : session.metadata?.gifted_to;
           const ownerId = giftedTo ? Number(giftedTo) : Number(developerId);
           await autoEquipIfSolo(ownerId, itemId);
 
@@ -192,28 +218,37 @@ export async function POST(request: Request) {
             sendPurchaseNotification(Number(developerId), githubLogin ?? "", pending.id, itemId);
           }
         } else {
-          // Check if already completed (webhook duplicate)
+          // No pending row found for this session.
+          // Check for an already-completed purchase (idempotency guard).
           const { data: existing } = await sb
             .from("purchases")
             .select("id")
-            .eq("developer_id", Number(developerId))
-            .eq("item_id", itemId)
+            .eq("stripe_session_id", session.id)
             .eq("status", "completed")
             .maybeSingle();
 
-          if (!existing) {
-            // Create completed purchase directly (edge case: pending was cleaned up)
-            await sb.from("purchases").insert({
-              developer_id: Number(developerId),
-              item_id: itemId,
-              provider: "stripe",
-              provider_tx_id: paymentIntentId ?? session.id,
-              amount_cents: session.amount_total ?? 0,
-              currency: session.currency ?? "usd",
-              status: "completed",
-            });
-            await autoEquipIfSolo(Number(developerId), itemId);
+          if (existing) {
+            // Duplicate webhook for an already-completed purchase — safe to ignore
+            console.log("[stripe webhook] duplicate event, purchase already completed:", existing.id);
+            break;
           }
+
+          // True orphan: no pending or completed row for this session.
+          // This can happen if the purchase row was manually deleted from the DB.
+          // Log prominently so an admin can investigate, but do NOT silently
+          // create a completed purchase without a verified pending row —
+          // the ghost-row path (previous lines 203–215) was removed because
+          // it created purchases without gifted_to metadata.
+          console.error(
+            "[stripe webhook] ORPHAN SESSION — no purchase row found for session:",
+            session.id,
+            "developer_id:", developerId,
+            "item_id:", itemId,
+            "payment_intent:", paymentIntentId,
+          );
+          // Return 200 to prevent Stripe from retrying — this is an admin-level
+          // data issue, not a transient error. The admin should investigate and
+          // manually create the purchase row if the payment was legitimate.
         }
         break;
       }
@@ -228,6 +263,16 @@ export async function POST(request: Request) {
             .eq("stripe_session_id", expiredSession.id)
             .eq("active", false);
         }
+
+        // Mark any pending purchase for this session as abandoned
+        // (belt-and-suspenders — checkout route already soft-abandons on retry,
+        // but session expiry is the authoritative signal from Stripe)
+        await sb
+          .from("purchases")
+          .update({ status: "abandoned" })
+          .eq("stripe_session_id", expiredSession.id)
+          .eq("status", "pending");
+
         break;
       }
 

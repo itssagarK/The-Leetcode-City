@@ -220,18 +220,25 @@ export async function POST(request: Request) {
     }
   }
 
-  // Check for existing pending purchase (prevent double-click)
-  const { data: pendingPurchase } = await sb
+  // Soft-abandon any existing pending purchase for the same (developer, item).
+  // Hard-deleting it would destroy the stripe_session_id → purchase mapping,
+  // causing the original session's webhook to create a ghost purchase row
+  // without gifted_to metadata (Bug B). Setting status = "abandoned" preserves
+  // the row so any in-flight webhook for that session can still match it,
+  // while preventing it from blocking new checkouts.
+  const { data: pendingPurchases } = await sb
     .from("purchases")
     .select("id")
     .eq("developer_id", dev.id)
     .eq("item_id", item_id)
-    .eq("status", "pending")
-    .maybeSingle();
+    .eq("status", "pending");
 
-  if (pendingPurchase) {
-    // Delete stale pending purchase to allow retry
-    await sb.from("purchases").delete().eq("id", pendingPurchase.id);
+  if (pendingPurchases && pendingPurchases.length > 0) {
+    const pendingIds = pendingPurchases.map((p) => p.id);
+    await sb
+      .from("purchases")
+      .update({ status: "abandoned" })
+      .in("id", pendingIds);
   }
 
   // DEV BYPASS: Allow Ishant_27 to get items for free for testing
@@ -267,6 +274,14 @@ export async function POST(request: Request) {
   try {
     if (provider === "stripe") {
       const amountCents = stripeCurrency === "brl" ? item.price_brl_cents : item.price_usd_cents;
+
+      // Create Stripe session first to get session.id before inserting the purchase row.
+      // session.id is stored as stripe_session_id and is the sole webhook join key —
+      // this eliminates the ambiguous (developer_id, item_id) lookup that caused Bug A.
+      const { url, sessionId } = await createCheckoutSession(
+        item_id, dev.id, githubLogin, stripeCurrency, user.email, giftedToDevId, gifted_to_login
+      );
+
       const { data: purchase, error: purchaseError } = await sb
         .from("purchases")
         .insert({
@@ -276,6 +291,7 @@ export async function POST(request: Request) {
           amount_cents: amountCents,
           currency: stripeCurrency,
           status: "pending",
+          stripe_session_id: sessionId,
           ...(giftedToDevId ? { gifted_to: giftedToDevId } : {}),
         })
         .select("id")
@@ -285,7 +301,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Failed to create purchase" }, { status: 500 });
       }
 
-      const { url } = await createCheckoutSession(item_id, dev.id, githubLogin, stripeCurrency, user.email, giftedToDevId, gifted_to_login);
       return NextResponse.json({ url, purchase_id: purchase.id });
     } else if (provider === "nowpayments") {
       // Crypto via NOWPayments
@@ -318,7 +333,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ url: invoiceUrl, purchase_id: purchase.id });
     } else if (provider === "cashfree") {
       // Cashfree (INR via UPI / Cards / Wallets)
-      const USD_TO_INR = 85;
       const amountCents = item.price_usd_cents;
       const { data: purchase, error: purchaseError } = await sb
         .from("purchases")

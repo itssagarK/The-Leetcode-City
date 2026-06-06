@@ -23,7 +23,7 @@ export async function createCheckoutSession(
   customerEmail?: string,
   giftedToDevId?: number | null,
   giftedToLogin?: string | null,
-): Promise<{ url: string }> {
+): Promise<{ url: string; sessionId: string }> {
   const sb = getSupabaseAdmin();
 
   // Price ALWAYS from DB, never from frontend
@@ -70,5 +70,7 @@ export async function createCheckoutSession(
     cancel_url: `${getBaseUrl()}/shop/${githubLogin}`,
   });
 
-  return { url: session.url! };
+  // Return session.id so the checkout route can store it on the purchases row.
+  // This is the stable, unique join key used by the webhook handler.
+  return { url: session.url!, sessionId: session.id };
 }
