@@ -389,6 +389,8 @@ export default memo(function InstancedBuildings({
       new THREE.InstancedBufferAttribute(lcData, 3),
     );
 
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     if (hasPlayedRiseGlobal) {
       for (let i = 0; i < count; i++) riseData[i] = 1;
       riseAttr.needsUpdate = true;
@@ -400,7 +402,8 @@ export default memo(function InstancedBuildings({
       risingRef.current = [];
     }
 
-    const safetyTimer = setTimeout(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
       const m = meshRef.current;
       if (!m) return;
       const attr = m.geometry.getAttribute("aRise") as
@@ -423,7 +426,9 @@ export default memo(function InstancedBuildings({
     }, 8000);
 
     mesh.count = count;
-    return () => clearTimeout(safetyTimer);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, [
     buildings,
     count,
