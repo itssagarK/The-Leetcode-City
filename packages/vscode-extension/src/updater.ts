@@ -67,7 +67,11 @@ export async function checkForUpdates(context: vscode.ExtensionContext) {
     if (!res.ok) return;
 
     const remote = await res.json();
-    const remoteVersion: string = remote.version;
+    const remoteVersion = remote?.version;
+
+    // Validate that the remote version exists and is a string
+    if (typeof remoteVersion !== "string") return;
+
     const ext = vscode.extensions.getExtension("leetcode-city.leetcode-city-pulse");
     if (!ext) return;
 
