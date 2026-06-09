@@ -402,33 +402,41 @@ export default memo(function InstancedBuildings({
       risingRef.current = [];
     }
 
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      const m = meshRef.current;
-      if (!m) return;
-      const attr = m.geometry.getAttribute("aRise") as
-        | THREE.InstancedBufferAttribute
-        | undefined;
-      if (!attr) return;
-      const arr = attr.array as Float32Array;
-      let anyZero = false;
-      for (let i = 0; i < arr.length; i++) {
-        if (arr[i] < 0.99) {
-          arr[i] = 1;
-          anyZero = true;
-        }
-      }
-      if (anyZero) {
-        attr.needsUpdate = true;
-        riseInitialized.current = true;
-        risingRef.current = [];
-      }
-    }, 8000);
+let safetyTimer: ReturnType<typeof setTimeout>;
 
-    mesh.count = count;
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+safetyTimer = setTimeout(() => {
+  const m = meshRef.current;
+  if (!m) return;
+
+  const attr = m.geometry.getAttribute("aRise") as
+    | THREE.InstancedBufferAttribute
+    | undefined;
+
+  if (!attr) return;
+
+  const arr = attr.array as Float32Array;
+
+  let anyZero = false;
+
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] < 0.99) {
+      arr[i] = 1;
+      anyZero = true;
+    }
+  }
+
+  if (anyZero) {
+    attr.needsUpdate = true;
+    riseInitialized.current = true;
+    risingRef.current = [];
+  }
+}, 8000);
+
+mesh.count = count;
+
+return () => {
+  clearTimeout(safetyTimer);
+};   
   }, [
     buildings,
     count,
