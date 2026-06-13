@@ -335,6 +335,7 @@ export default memo(function InstancedBuildings({
   const liveData = useMemo(() => new Float32Array(count), [count]);
   const risingRef = useRef<RiseState[]>([]);
   const riseInitialized = useRef(false);
+  const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdRiseRef = useRef(holdRise);
   holdRiseRef.current = holdRise;
 
@@ -400,7 +401,8 @@ export default memo(function InstancedBuildings({
       risingRef.current = [];
     }
 
-    const safetyTimer = setTimeout(() => {
+    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+    safetyTimerRef.current = setTimeout(() => {
       const m = meshRef.current;
       if (!m) return;
       const attr = m.geometry.getAttribute("aRise") as
@@ -420,10 +422,16 @@ export default memo(function InstancedBuildings({
         riseInitialized.current = true;
         risingRef.current = [];
       }
+      safetyTimerRef.current = null;
     }, 8000);
 
     mesh.count = count;
-    return () => clearTimeout(safetyTimer);
+    return () => {
+      if (safetyTimerRef.current) {
+        clearTimeout(safetyTimerRef.current);
+        safetyTimerRef.current = null;
+      }
+    };
   }, [
     buildings,
     count,
