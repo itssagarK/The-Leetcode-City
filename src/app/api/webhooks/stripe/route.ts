@@ -126,6 +126,7 @@ export async function POST(request: Request) {
         // --- Shop item purchase ---
         const developerId = session.metadata?.developer_id;
         const itemId = session.metadata?.item_id;
+        const idempotencyKey = session.metadata?.idempotency_key;
         const paymentIntentId =
           typeof session.payment_intent === "string"
             ? session.payment_intent
@@ -136,10 +137,23 @@ export async function POST(request: Request) {
           break;
         }
 
+        // Idempotency check: skip if already processed
+        if (idempotencyKey) {
+          const { data: existingPurchase } = await sb
+            .from("purchases")
+            .select("id")
+            .eq("idempotency_key", idempotencyKey)
+            .maybeSingle();
+          if (existingPurchase) {
+            console.log(`[Stripe webhook] Duplicate event for ${idempotencyKey}, skipping`);
+            break;
+          }
+        }
+
         const txId = paymentIntentId ?? session.id;
 
-        // 1. Attempt to claim a pending purchase record atomically
-        const { data: claimedPending } = await sb
+        // Atomically claim the pending purchase — only succeeds if still pending
+        const { data: pending } = await sb
           .from("purchases")
           .update({
             status: "processing",
@@ -152,7 +166,7 @@ export async function POST(request: Request) {
           .select()
           .maybeSingle();
 
-        if (claimedPending) {
+        if (pending) {
           const giftedTo = session.metadata?.gifted_to;
           const ownerId = giftedTo ? Number(giftedTo) : Number(developerId);
           const { status: purchaseStatus } = await fulfillItemPurchase(ownerId, itemId, sb);
@@ -162,7 +176,7 @@ export async function POST(request: Request) {
             .update({
               status: purchaseStatus,
             })
-            .eq("id", claimedPending.id);
+            .eq("id", pending.id);
 
           // Auto-equip if solo item in zone
           await autoEquipIfSolo(ownerId, itemId);
@@ -187,8 +201,8 @@ export async function POST(request: Request) {
             });
 
             // Gift notifications: receipt to buyer, alert to receiver
-            sendGiftSentNotification(Number(developerId), githubLogin ?? "", receiver?.github_login ?? "unknown", claimedPending.id, itemId);
-            sendGiftReceivedNotification(Number(giftedTo), githubLogin ?? "someone", receiver?.github_login ?? "unknown", claimedPending.id, itemId);
+            sendGiftSentNotification(Number(developerId), githubLogin ?? "", receiver?.github_login ?? "unknown", pending.id, itemId);
+            sendGiftReceivedNotification(Number(giftedTo), githubLogin ?? "someone", receiver?.github_login ?? "unknown", pending.id, itemId);
           } else {
             await sb.from("activity_feed").insert({
               event_type: "item_purchased",
@@ -197,7 +211,7 @@ export async function POST(request: Request) {
             });
 
             // Purchase receipt notification
-            sendPurchaseNotification(Number(developerId), githubLogin ?? "", claimedPending.id, itemId);
+            sendPurchaseNotification(Number(developerId), githubLogin ?? "", pending.id, itemId);
           }
         } else {
           // No pending row found. Check if already processing or completed —
@@ -221,6 +235,7 @@ export async function POST(request: Request) {
                 item_id: itemId,
                 provider: "stripe",
                 provider_tx_id: txId,
+                idempotency_key: idempotencyKey ?? null,
                 amount_cents: session.amount_total ?? 0,
                 currency: session.currency ?? "usd",
                 status: "processing",

@@ -47,6 +47,18 @@ export async function POST(request: Request) {
       case "pixQrCode.paid": {
         if (!pixId) break;
 
+        // Idempotency check using pix_id as idempotency key
+        const idempotencyKey = `abacatepay_${pixId}`;
+        const { data: existingIdem } = await sb
+          .from("purchases")
+          .select("id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+        if (existingIdem) {
+          console.log(`[AbacatePay webhook] Duplicate event for ${pixId}, skipping`);
+          break;
+        }
+
         // --- Sky Ad purchase ---
         const { data: ad } = await sb
           .from("sky_ads")
@@ -111,7 +123,7 @@ export async function POST(request: Request) {
 
           await sb
             .from("purchases")
-            .update({ status: purchaseStatus })
+            .update({ status: purchaseStatus, idempotency_key: idempotencyKey })
             .eq("id", purchase.id);
 
           const fullPurchase = purchase;

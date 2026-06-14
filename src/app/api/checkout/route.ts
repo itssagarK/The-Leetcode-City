@@ -268,6 +268,7 @@ export async function POST(request: Request) {
         developer_id: dev.id,
         item_id,
         provider: isFree ? "free" : "stripe",
+        idempotency_key: `dev_${dev.id}_${item_id}_${Date.now()}`,
         amount_cents: 0,
         currency: "usd",
         status: purchaseStatus,

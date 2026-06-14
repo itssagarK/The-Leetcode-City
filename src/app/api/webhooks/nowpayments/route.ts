@@ -42,8 +42,20 @@ export async function POST(request: Request) {
     switch (paymentStatus) {
       case "finished":
       case "confirmed": {
-        // Check if it is a sky ad purchase (linked to orderId)
-        let { data: ad } = await sb
+        // Idempotency check using order_id as idempotency key
+        const idempotencyKey = `nowpayments_${orderId}`;
+        const { data: existingIdem } = await sb
+          .from("purchases")
+          .select("id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+        if (existingIdem) {
+          console.log(`[NOWPayments webhook] Duplicate event for ${orderId}, skipping`);
+          break;
+        }
+
+        // Check if it is a sky ad purchase
+        const { data: ad } = await sb
           .from("sky_ads")
           .select("id, plan_id, active")
           .eq("stripe_session_id", orderId)
@@ -120,6 +132,7 @@ export async function POST(request: Request) {
           .update({
             status: purchaseStatus,
             provider_tx_id: paymentId ?? orderId,
+            idempotency_key: idempotencyKey,
           })
           .eq("id", purchase.id);
 

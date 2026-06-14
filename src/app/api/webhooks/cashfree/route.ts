@@ -54,6 +54,18 @@ export async function POST(request: Request) {
 
     switch (eventType) {
       case "PAYMENT_SUCCESS_WEBHOOK": {
+        // Idempotency check using Cashfree order_id as idempotency key
+        const idempotencyKey = `cashfree_${orderId}`;
+        const { data: existingIdem } = await sb
+          .from("purchases")
+          .select("id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+        if (existingIdem) {
+          console.log(`[Cashfree webhook] Duplicate event for ${orderId}, skipping`);
+          break;
+        }
+
         // Double-check order status with Cashfree API
         const { orderStatus, orderAmount } = await getCashfreeOrderStatus(orderId);
 
@@ -84,11 +96,11 @@ export async function POST(request: Request) {
               .select("metadata")
               .eq("id", "support_renewal")
               .single();
-            
+
             const currentMeta = (item?.metadata as Record<string, any>) || {};
             const currentRaised = Number(currentMeta.raised_inr || 0);
             const targetInr = Number(currentMeta.target_inr || 2900);
-            
+
             await sb
               .from("items")
               .update({
@@ -99,14 +111,14 @@ export async function POST(request: Request) {
                 }
               })
               .eq("id", "support_renewal");
-            
+
             console.log(`[Cashfree webhook] Support renewal updated: +${supportAmountInr} INR. New total: ${currentRaised + supportAmountInr} INR.`);
           }
           break;
         }
 
         // Check if it is a sky ad purchase (linked to orderId)
-        let { data: ad } = await sb
+        const { data: ad } = await sb
           .from("sky_ads")
           .select("id, plan_id, active")
           .eq("stripe_session_id", orderId)
@@ -182,7 +194,7 @@ export async function POST(request: Request) {
         // Mark as completed/delivered
         await sb
           .from("purchases")
-          .update({ status: purchaseStatus })
+          .update({ status: purchaseStatus, idempotency_key: idempotencyKey })
           .eq("id", purchase.id);
 
         const fullPurchase = purchase;
