@@ -200,7 +200,9 @@ export async function POST(request: Request) {
             sendPurchaseNotification(Number(developerId), githubLogin ?? "", claimedPending.id, itemId);
           }
         } else {
-          // 2. No pending record found; check if this transaction was already processed
+          // No pending row found. Check if already processing or completed —
+          // query by developer_id+item_id+provider, NOT provider_tx_id, because
+          // a concurrent winning request may not have written provider_tx_id yet.
           const { data: existing } = await sb
             .from("purchases")
             .select("id, status")
@@ -261,12 +263,12 @@ export async function POST(request: Request) {
             : charge.payment_intent?.id;
 
         if (paymentIntentId) {
-          // Refund shop purchases
+          // Refund shop purchases (both completed and delivered consumables)
           await sb
             .from("purchases")
             .update({ status: "refunded" })
             .eq("provider_tx_id", paymentIntentId)
-            .eq("status", "completed");
+            .in("status", ["completed", "delivered"]);
 
           // Refund sky ads: find checkout session for this payment intent
           const stripe = getStripe();

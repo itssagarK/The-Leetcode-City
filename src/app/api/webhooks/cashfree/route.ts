@@ -66,6 +66,18 @@ export async function POST(request: Request) {
         if (orderId.startsWith("support_")) {
           const supportAmountInr = Math.round(orderAmount);
           if (supportAmountInr > 0) {
+            // Try to record this transaction in support_donations table
+            const { data: inserted, error: insertError } = await sb
+              .from("support_donations")
+              .insert({ order_id: orderId, amount_inr: supportAmountInr })
+              .select("id")
+              .maybeSingle();
+            
+            if (insertError || !inserted) {
+              console.log(`[Cashfree webhook] Support donation ${orderId} already processed — skipping`);
+              break;
+            }
+
             // Increment raised_inr inside items table for id='support_renewal'
             const { data: item } = await sb
               .from("items")
@@ -145,7 +157,22 @@ export async function POST(request: Request) {
         }
 
         if (purchase.status !== "pending") {
-          console.log(`[Cashfree webhook] Purchase ${purchase.id} already ${purchase.status}`);
+          console.log(`[Cashfree webhook] Purchase ${purchase.id} already ${purchase.status} — skipping`);
+          break;
+        }
+
+        // Atomic claim: transition pending → processing in one UPDATE.
+        // If a concurrent request already claimed it, claimed will be null.
+        const { data: claimed } = await sb
+          .from("purchases")
+          .update({ status: "processing" })
+          .eq("id", purchase.id)
+          .eq("status", "pending")
+          .select("id")
+          .maybeSingle();
+
+        if (!claimed) {
+          console.log(`[Cashfree webhook] Purchase ${purchase.id} already claimed by concurrent request — skipping`);
           break;
         }
 
