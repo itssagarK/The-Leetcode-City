@@ -4091,7 +4091,7 @@ function HomeContent() {
                       ? "search any LeetCode username"
                       : "type your LeetCode username"
                   }
-                  className="min-w-0 flex-1 border-[3px] border-border bg-bg-raised px-3 py-2 text-base sm:text-xs text-cream outline-none transition-colors placeholder:text-dim sm:px-4 sm:py-2.5"
+                  className="min-w-0 flex-1 border-[3px] border-border bg-bg-raised px-3 py-2 text-base sm:text-xs text-cream outline-none transition-colors placeholder:text-dim sm:px-4 sm:py-2.5 normal-case"
                   style={{ borderColor: undefined }}
                   onFocus={(e) =>
                     (e.currentTarget.style.borderColor = theme.accent)
@@ -6625,7 +6625,7 @@ function HomeContent() {
                       value={linkInput}
                       onChange={(e) => setLinkInput(e.target.value)}
                       placeholder="LeetCode Username"
-                      className="flex-1 bg-black/50 border border-border px-3 py-2 text-[12px] text-cream outline-none focus:border-border-light"
+                      className="flex-1 bg-black/50 border border-border px-3 py-2 text-[12px] text-cream outline-none focus:border-border-light normal-case"
                     />
                     <button
                       type="button"
